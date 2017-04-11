@@ -3,6 +3,9 @@
 #include <string>
 #include <cmath>
 #include <vector>
+#include <boost/program_options.hpp>
+
+namespace po = boost::program_options;
 
 float calculateRMS(float *data, long long samples) {
     float mean = 0.0;
@@ -27,19 +30,100 @@ struct gainPoint {
     sf_count_t position;
 };
 
-int main(void) {
-    std::string filename = "input.wav";
+int main(int argc, char **argv) {
+    std::string inputFilename = "";
+    std::string outputFilename = "";
     int blockSize = 1024;
     float minDb = -45;
     float targetDb = -20;
     int windowSize = 20;
     bool limiter = true;
-    float limiterRelease = 0.0006; // dB per sample
-    float limiterAttack = 1024; // number of samples
+    float limiterRelease = 0.0006;
+    int limiterAttack = 1024;
+
+    po::options_description prettyDesc("Options"); // this version doesn't include the positional arguments
+    prettyDesc.add_options()
+        ("help", "Show this help information")
+        ("target,t", po::value<float>(&targetDb)->required(), "Set target dB level")
+        ("silence,s", po::value<float>(&minDb)->default_value(-45.0), "Minimum dB value for audio content, anything below this is considered silence.")
+        ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
+        ("block-size", po::value<int>(&blockSize)->default_value(1024), "Block size for calculating RMS values.")
+        ("limiter-attack", po::value<int>(&limiterAttack)->default_value(1024), "Limiter attack time in samples.")
+        ("limiter-release", po::value<float>(&limiterRelease)->default_value(0.0006), "Limiter release time in dB/sample.")
+        ("limiter-disable", "Disable the limiter completely - may cause clipping.")
+    ;
+    po::options_description desc("Options"); // this one is actually used to parse, don't use required()
+    desc.add_options()
+        ("help", "Show this help information")
+        ("input-file", po::value<std::string>(&inputFilename))
+        ("output-file", po::value<std::string>(&outputFilename))
+        ("target,t", po::value<float>(&targetDb), "Set target dB level")
+        ("silence,s", po::value<float>(&minDb)->default_value(-45.0), "Minimum dB value for audio content, anything below this is considered silence.")
+        ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
+        ("block-size", po::value<int>(&blockSize)->default_value(1024), "Block size for calculating RMS values.")
+        ("limiter-attack", po::value<int>(&limiterAttack)->default_value(1024), "Limiter attack time in samples.")
+        ("limiter-release", po::value<float>(&limiterRelease)->default_value(0.0006), "Limiter release time in dB/sample.")
+        ("disable-limiter", "Disable the limiter completely - may cause clipping.")
+    ;
+    po::positional_options_description p;
+    p.add("input-file", 1).add("output-file", 1);
+
+    po::variables_map vm;
+    try {
+        po::store(po::command_line_parser(argc, argv).options(desc).positional(p).run(), vm);
+        po::notify(vm);
+    } catch(std::exception& e) {
+        std::cout << "Error: " << e.what() << std::endl;
+        return 1;
+    }
+
+    if (vm.count("help")) {
+        std::cout << "Usage: " << argv[0] << " input.wav output.wav OPTIONS" << std::endl << std::endl;
+        std::cout << prettyDesc << std::endl;
+        return 1;
+    }
+
+    // do we have the required values?
+    if (!vm.count("input-file") || !vm.count("output-file")) {
+        std::cout << "The input and output filenames are required." << std::endl;
+        return 1;
+    }
+    if (!vm.count("target")) {
+        std::cout << "The target dB level (-t, --target)is required." << std::endl;
+        return 1;
+    }
+    if (vm.count("disable-limiter")) {
+        limiter = false;
+    }
+    // check that everything's within a valid range
+    if (blockSize < 32) {
+        std::cout << "Block size must be >= 32." << std::endl;
+        return 1;
+    }
+    if (minDb >= 0) {
+        std::cout << "Silence level must be < 0 dB." << std::endl;
+        return 1;
+    }
+    if (targetDb >= 0) {
+        std::cout << "Target level must be < 0 dB." << std::endl;
+        return 1;
+    }
+    if (windowSize < 1) {
+        std::cout << "Window size must be >= 1." << std::endl;
+        return 1;
+    }
+    if (limiterRelease <= 0) {
+        std::cout << "Limiter release must be > 0." << std::endl;
+        return 1;
+    }
+    if (limiterAttack < 1) {
+        std::cout << "Limiter attack must be > 0." << std::endl;
+        return 1;
+    }
 
     SF_INFO info;
     info.format = 0;
-    SNDFILE* infile = sf_open(filename.c_str(), SFM_READ, &info);
+    SNDFILE* infile = sf_open(inputFilename.c_str(), SFM_READ, &info);
 
     if (!infile) {
         std::cout << "Error opening file: " << sf_strerror(NULL) << std::endl;
@@ -122,7 +206,7 @@ int main(void) {
     outinfo.format = SF_FORMAT_WAV | SF_FORMAT_PCM_16;
     outinfo.samplerate = info.samplerate;
     outinfo.channels = info.channels;
-    SNDFILE *outfile = sf_open("output.wav", SFM_WRITE, &outinfo);
+    SNDFILE *outfile = sf_open(outputFilename.c_str(), SFM_WRITE, &outinfo);
 
     if (!outfile) {
         std::cout << "Error opening file: " << sf_strerror(NULL) << std::endl;
