@@ -21,6 +21,7 @@ int main(int argc, char **argv) {
     float limiterRelease = 0.0006;
     int limiterAttack = 1024;
     bool checkSilence = false;
+    float predictive = 0.5;
 
     po::options_description prettyDesc("Options"); // this version doesn't include the positional arguments
     prettyDesc.add_options()
@@ -29,6 +30,7 @@ int main(int argc, char **argv) {
         ("silence,s", po::value<float>(&minDb)->default_value(-45.0), "Minimum dB value for audio content, anything below this is considered silence.")
         ("check-silence", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
         ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
+        ("predictive", po::value<float>(&predictive)->default_value(0.5), "Predictive factor. 1.0 is fully predictive, 0.0 is fully reactive.")
         ("block-size", po::value<int>(&blockSize)->default_value(1024), "Block size for calculating RMS values.")
         ("limiter-attack", po::value<int>(&limiterAttack)->default_value(4), "Limiter attack time in samples. Increasing this value will directly increase processing time.")
         ("limiter-release", po::value<float>(&limiterRelease)->default_value(0.0006), "Limiter release time in dB/sample.")
@@ -43,6 +45,7 @@ int main(int argc, char **argv) {
         ("silence,s", po::value<float>(&minDb)->default_value(-45.0), "Minimum dB value for audio content, anything below this is considered silence.")
         ("check-silence", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
         ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
+        ("predictive", po::value<float>(&predictive)->default_value(0.5), "Predictive factor. 1.0 is fully predictive, 0.0 is fully reactive.")
         ("block-size", po::value<int>(&blockSize)->default_value(1024), "Block size for calculating RMS values.")
         ("limiter-attack", po::value<int>(&limiterAttack)->default_value(4), "Limiter attack time in samples. Increasing this value will directly increase processing time.")
         ("limiter-release", po::value<float>(&limiterRelease)->default_value(0.0006), "Limiter release time in dB/sample.")
@@ -96,6 +99,10 @@ int main(int argc, char **argv) {
     }
     if (windowSize < 1) {
         std::cout << "Window size must be >= 1." << std::endl;
+        return 1;
+    }
+    if (predictive < 0.0 && predictive > 1.0) {
+        std::cout << "Predictive factor must be between 0 and 1." << std::endl;
         return 1;
     }
     if (limiterRelease <= 0) {
@@ -165,7 +172,8 @@ int main(int argc, char **argv) {
     int ringBufferPos = 0;
     std::vector<float>::size_type currentBlock = 0;
     // start filling the ring buffer
-    for (int i=0; i<windowSize; i++) {
+    int ringBufferPrefill = 1 + (int)(predictive * (float)windowSize * 2.0);
+    for (int i=0; i<ringBufferPrefill; i++) {
         if (currentBlock < rmsBlocks.size()) {
             ringBuffer[ringBufferPos] = rmsBlocks[currentBlock];
         } else {
