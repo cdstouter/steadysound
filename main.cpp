@@ -15,6 +15,7 @@ int main(int argc, char **argv) {
     std::string outputFilename = "";
     int blockSize = 1024;
     float minDb = -45;
+    bool targetDbSet = false;
     float targetDb = -20;
     int windowSize = 20;
     bool limiterUsed = true;
@@ -26,7 +27,7 @@ int main(int argc, char **argv) {
     po::options_description prettyDesc("Options"); // this version doesn't include the positional arguments
     prettyDesc.add_options()
         ("help", "Show this help information")
-        ("target,t", po::value<float>(&targetDb)->required(), "Set target dB level")
+        ("target,t", po::value<float>(&targetDb), "Set target dB level. Set to the median RMS dB level if not specified.")
         ("silence,s", po::value<float>(&minDb)->default_value(-45.0), "Minimum dB value for audio content, anything below this is considered silence.")
         ("check-silence", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
         ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
@@ -41,7 +42,7 @@ int main(int argc, char **argv) {
         ("help", "Show this help information")
         ("input-file", po::value<std::string>(&inputFilename))
         ("output-file", po::value<std::string>(&outputFilename))
-        ("target,t", po::value<float>(&targetDb), "Set target dB level")
+        ("target,t", po::value<float>(&targetDb), "Set target dB level. Set to the median RMS dB level if not specified.")
         ("silence,s", po::value<float>(&minDb)->default_value(-45.0), "Minimum dB value for audio content, anything below this is considered silence.")
         ("check-silence", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
         ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
@@ -77,9 +78,8 @@ int main(int argc, char **argv) {
     if (vm.count("check-silence")) {
         checkSilence = true;
     }
-    if (!vm.count("target") && !checkSilence) {
-        std::cout << "The target dB level (-t, --target)is required." << std::endl;
-        return 1;
+    if (vm.count("target")) {
+        targetDbSet = true;
     }
     if (vm.count("disable-limiter")) {
         limiterUsed = false;
@@ -143,16 +143,29 @@ int main(int argc, char **argv) {
     std::vector<float> rmsBlocks;
     sf_count_t frames;
     float *data = new float[blockSize * info.channels];
+    float medianRMS = 0.0;
+    int64_t medianRMSCount = 0;
     do {
         frames = sf_readf_float(infile, data, blockSize);
         float rms = calculateRMS(data, frames * info.channels);
         float rmsDb = VtoDB(rms);
         rmsBlocks.push_back(rmsDb);
-        if (checkSilence && rmsDb > minDb) {
-            sf_writef_float(outfile, data, frames);
+        if (rmsDb > minDb) {
+            medianRMS += rmsDb;
+            medianRMSCount++;
+            if (checkSilence) {
+                sf_writef_float(outfile, data, frames);
+            }
         }
     } while (frames == blockSize);
     std::cout << rmsBlocks.size() << " RMS blocks calculated." << std::endl;
+    medianRMS = medianRMS / medianRMSCount;
+    std::cout << "RMS median: " << medianRMS << " dB." << std::endl;
+    // if the target dB isn't set, use the median as the target
+    if (!targetDbSet) {
+        targetDb = medianRMS;
+        std::cout << "Target dB set to " << targetDb << " dB." << std::endl;
+    }
     delete[] data;
 
     if (checkSilence) {
