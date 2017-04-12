@@ -6,6 +6,7 @@
 #include <boost/program_options.hpp>
 
 #include "utilities.hpp"
+#include "limiter.hpp"
 
 namespace po = boost::program_options;
 
@@ -16,7 +17,7 @@ int main(int argc, char **argv) {
     float minDb = -45;
     float targetDb = -20;
     int windowSize = 20;
-    bool limiter = true;
+    bool limiterUsed = true;
     float limiterRelease = 0.0006;
     int limiterAttack = 1024;
     bool checkSilence = false;
@@ -29,7 +30,7 @@ int main(int argc, char **argv) {
         ("check-silence", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
         ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
         ("block-size", po::value<int>(&blockSize)->default_value(1024), "Block size for calculating RMS values.")
-        ("limiter-attack", po::value<int>(&limiterAttack)->default_value(1024), "Limiter attack time in samples.")
+        ("limiter-attack", po::value<int>(&limiterAttack)->default_value(4), "Limiter attack time in samples. Increasing this value will directly increase processing time.")
         ("limiter-release", po::value<float>(&limiterRelease)->default_value(0.0006), "Limiter release time in dB/sample.")
         ("limiter-disable", "Disable the limiter completely - may cause clipping.")
     ;
@@ -43,7 +44,7 @@ int main(int argc, char **argv) {
         ("check-silence", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
         ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
         ("block-size", po::value<int>(&blockSize)->default_value(1024), "Block size for calculating RMS values.")
-        ("limiter-attack", po::value<int>(&limiterAttack)->default_value(1024), "Limiter attack time in samples.")
+        ("limiter-attack", po::value<int>(&limiterAttack)->default_value(4), "Limiter attack time in samples. Increasing this value will directly increase processing time.")
         ("limiter-release", po::value<float>(&limiterRelease)->default_value(0.0006), "Limiter release time in dB/sample.")
         ("disable-limiter", "Disable the limiter completely - may cause clipping.")
     ;
@@ -78,7 +79,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (vm.count("disable-limiter")) {
-        limiter = false;
+        limiterUsed = false;
     }
     // check that everything's within a valid range
     if (blockSize < 32) {
@@ -137,7 +138,6 @@ int main(int argc, char **argv) {
     float *data = new float[blockSize * info.channels];
     do {
         frames = sf_readf_float(infile, data, blockSize);
-        //std::cout << samples << std::endl;
         float rms = calculateRMS(data, frames * info.channels);
         float rmsDb = VtoDB(rms);
         rmsBlocks.push_back(rmsDb);
@@ -230,13 +230,18 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // set up the limiter
+    Limiter *limiter = NULL;
+    if (limiterUsed) limiter = new Limiter(limiterAttack, limiterRelease);
+
     // now we go through the file and apply the gain!
-    float limiterGain = 0.0;
     std::cout << "Applying gain..." << std::endl;
     int processSize = 1024;
-    if (limiter && limiterAttack > processSize) processSize = limiterAttack;
-    data = new float[processSize * info.channels];
-    float *oldData = new float[processSize * info.channels];
+    if (limiterUsed && limiterAttack > processSize) processSize = limiterAttack;
+    float *backingData1 = new float[processSize * info.channels];
+    float *backingData2 = new float[processSize * info.channels];
+    data = backingData1;
+    float *oldData = backingData2;
     sf_count_t oldFrames;
     sf_seek(infile, 0, SEEK_SET);
     sf_count_t currentFrame = 0;
@@ -274,49 +279,20 @@ int main(int argc, char **argv) {
                 float pos = (float)(currentFrame - currentGainPoint.position) / (float)(nextGainPoint.position - currentGainPoint.position);
                 gain = ((1.0f - pos) * currentGainPoint.gain) + (pos * nextGainPoint.gain);
             }
-            //float gain = interpolateGain(gainPoints, currentFrame);
-            if (limiter) gain += limiterGain;
             float gainMult = DBtoV(gain);
             // apply the gain
             float highestValue = 0.0;
             for (int j=0; j<info.channels; j++) {
                 float sample = data[i * info.channels + j];
                 sample = sample * gainMult;
-                if (!limiter && sample > 1.0) clipped++;
+                if (!limiterUsed && sample > 1.0) clipped++;
                 if (sample > highestValue) highestValue = sample;
                 data[i * info.channels + j] = sample;
             }
-            if (highestValue > 1.0 && limiter) {
-                // kick the limiter in
-                highestValue += .001;
-                float additionalLimiterGain = -VtoDB(highestValue);
-                limiterGain += additionalLimiterGain;
-                // and drop the attack frames down
-                for (int attack=0; attack<limiterAttack; attack++) {
-                    int frame = i - attack;
-                    float gain = additionalLimiterGain * ((float)(limiterAttack - attack) / (float)limiterAttack);
-                    float mult = DBtoV(gain);
-                    if (frame >= 0) {
-                        for (int j=0; j<info.channels; j++) {
-                            data[frame * info.channels + j] *= mult;
-                        }
-                    } else {
-                        int oldFrame = frame + oldFrames;
-                        for (int j=0; j<info.channels; j++) {
-                            oldData[oldFrame * info.channels + j] *= mult;
-                        }
-                    }
-                }
-                // and drop our current frame down
-                for (int j=0; j<info.channels; j++) {
-                    data[i * info.channels + j] /= highestValue;
-                }
-                
-            }
             currentFrame++;
-            limiterGain += limiterRelease;
-            if (limiterGain > 0) limiterGain = 0;
         }
+        // apply the limiter
+        limiter->process(oldData, oldFrames, info.channels, data, frames);
         // write the frames to the new file
         if (blockNum > 0) sf_writef_float(outfile, oldData, oldFrames);
         blockNum++;
@@ -324,14 +300,27 @@ int main(int argc, char **argv) {
             int thisPerc = (blockNum * 100) / totalBlocks;
             if (thisPerc > currentPerc) {
                 currentPerc = thisPerc;
-                std::cout << std::setw(3) << currentPerc << "% done" << "\r" << std::flush;
+                std::cout << ">" << std::setw(3) << currentPerc << "% done" << "\r" << std::flush;
             }
         }
     } while (frames == processSize);
-    std::cout << "Done.    " << std::endl;
+    std::cout << "Done.     " << std::endl;
 
+    limiter->process(data, frames, info.channels, NULL, 0);
     sf_writef_float(outfile, data, frames);
     if (clipped) std::cout << "WARNING: " << clipped << " samples clipped and limiter disabled" << std::endl;
+
+    if (limiterUsed) {
+        int limitedPercent = 100.0 * ((float)limiter->getLimitedFrames() / (float)limiter->getTotalFrames());
+        std::cout << limiter->getLimitedFrames() << " " << limiter->getTotalFrames() << std::endl;
+        std::cout << "Limiter applied to " << limitedPercent << "% of audio." << std::endl;
+        if (limitedPercent > 10) {
+            std::cout << "WARNING: You may want to lower the target dB level so that less limiting is applied." << std::endl;
+        }
+        delete limiter;
+    }
+    delete[] backingData1;
+    delete[] backingData2;
 
     sf_close(infile);
     sf_close(outfile);
