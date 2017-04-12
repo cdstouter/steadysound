@@ -1,5 +1,6 @@
 #include <sndfile.h>
 #include <iostream>
+#include <iomanip>
 #include <string>
 #include <vector>
 #include <boost/program_options.hpp>
@@ -323,14 +324,14 @@ int main(int argc, char **argv) {
             int thisPerc = (blockNum * 100) / totalBlocks;
             if (thisPerc > currentPerc) {
                 currentPerc = thisPerc;
-                std::cout << currentPerc << "% done" << std::endl;
+                std::cout << std::setw(3) << currentPerc << "% done" << "\r" << std::flush;
             }
         }
     } while (frames == processSize);
+    std::cout << "Done.    " << std::endl;
+
     sf_writef_float(outfile, data, frames);
     if (clipped) std::cout << "WARNING: " << clipped << " samples clipped and limiter disabled" << std::endl;
-
-    std::cout << "Done." << std::endl;
 
     sf_close(infile);
     sf_close(outfile);
