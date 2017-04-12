@@ -45,7 +45,7 @@ void Limiter::process(float *data, int64_t frames, int channels, float *lookahea
                 }
             }
         }
-        float neededGain = -(VtoDB(max) + 0.01);
+        float neededGain = -(VtoDB(max) + 0.001);
         if (neededGain < gain) {
             gain = neededGain;
         }
