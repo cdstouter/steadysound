@@ -18,12 +18,14 @@ int main(int argc, char **argv) {
     bool limiter = true;
     float limiterRelease = 0.0006;
     int limiterAttack = 1024;
+    bool checkSilence = false;
 
     po::options_description prettyDesc("Options"); // this version doesn't include the positional arguments
     prettyDesc.add_options()
         ("help", "Show this help information")
         ("target,t", po::value<float>(&targetDb)->required(), "Set target dB level")
         ("silence,s", po::value<float>(&minDb)->default_value(-45.0), "Minimum dB value for audio content, anything below this is considered silence.")
+        ("check-silence", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
         ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
         ("block-size", po::value<int>(&blockSize)->default_value(1024), "Block size for calculating RMS values.")
         ("limiter-attack", po::value<int>(&limiterAttack)->default_value(1024), "Limiter attack time in samples.")
@@ -37,6 +39,7 @@ int main(int argc, char **argv) {
         ("output-file", po::value<std::string>(&outputFilename))
         ("target,t", po::value<float>(&targetDb), "Set target dB level")
         ("silence,s", po::value<float>(&minDb)->default_value(-45.0), "Minimum dB value for audio content, anything below this is considered silence.")
+        ("check-silence", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
         ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
         ("block-size", po::value<int>(&blockSize)->default_value(1024), "Block size for calculating RMS values.")
         ("limiter-attack", po::value<int>(&limiterAttack)->default_value(1024), "Limiter attack time in samples.")
@@ -66,7 +69,10 @@ int main(int argc, char **argv) {
         std::cout << "The input and output filenames are required." << std::endl;
         return 1;
     }
-    if (!vm.count("target")) {
+    if (vm.count("check-silence")) {
+        checkSilence = true;
+    }
+    if (!vm.count("target") && !checkSilence) {
         std::cout << "The target dB level (-t, --target)is required." << std::endl;
         return 1;
     }
@@ -104,10 +110,24 @@ int main(int argc, char **argv) {
     SNDFILE* infile = sf_open(inputFilename.c_str(), SFM_READ, &info);
 
     if (!infile) {
-        std::cout << "Error opening file: " << sf_strerror(NULL) << std::endl;
+        std::cout << "Error opening input file: " << sf_strerror(NULL) << std::endl;
         return 1;
     }
 
+    SNDFILE *outfile = NULL;
+    if (checkSilence) {
+        SF_INFO outinfo;
+        outinfo.format = SF_FORMAT_WAV | SF_FORMAT_PCM_16;
+        outinfo.samplerate = info.samplerate;
+        outinfo.channels = info.channels;
+        outfile = sf_open(outputFilename.c_str(), SFM_WRITE, &outinfo);
+
+        if (!outfile) {
+            std::cout << "Error opening output file: " << sf_strerror(NULL) << std::endl;
+            sf_close(infile);
+            return 1;
+        }
+    }
 
     // the file was opened, let's calculate some RMS!
     std::cout << "Calculating RMS values..." << std::endl;
@@ -120,9 +140,20 @@ int main(int argc, char **argv) {
         float rms = calculateRMS(data, frames * info.channels);
         float rmsDb = VtoDB(rms);
         rmsBlocks.push_back(rmsDb);
+        if (checkSilence && rmsDb > minDb) {
+            sf_writef_float(outfile, data, frames);
+        }
     } while (frames == blockSize);
     std::cout << rmsBlocks.size() << " RMS blocks calculated." << std::endl;
     delete[] data;
+
+    if (checkSilence) {
+        std::cout << "Done." << std::endl;
+
+        sf_close(infile);
+        sf_close(outfile);
+        return 0;
+    }
 
     // use a ring buffer to calculate a moving average over the RMS blocks
     int ringBufferSize = windowSize * 2 + 1;
@@ -184,10 +215,10 @@ int main(int argc, char **argv) {
     outinfo.format = SF_FORMAT_WAV | SF_FORMAT_PCM_16;
     outinfo.samplerate = info.samplerate;
     outinfo.channels = info.channels;
-    SNDFILE *outfile = sf_open(outputFilename.c_str(), SFM_WRITE, &outinfo);
+    outfile = sf_open(outputFilename.c_str(), SFM_WRITE, &outinfo);
 
     if (!outfile) {
-        std::cout << "Error opening file: " << sf_strerror(NULL) << std::endl;
+        std::cout << "Error opening output file: " << sf_strerror(NULL) << std::endl;
         sf_close(infile);
         return 1;
     }
@@ -292,6 +323,8 @@ int main(int argc, char **argv) {
     } while (frames == processSize);
     sf_writef_float(outfile, data, frames);
     if (clipped) std::cout << "WARNING: " << clipped << " samples clipped and limiter disabled" << std::endl;
+
+    std::cout << "Done." << std::endl;
 
     sf_close(infile);
     sf_close(outfile);
