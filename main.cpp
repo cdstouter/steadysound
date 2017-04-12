@@ -312,8 +312,11 @@ int main(int argc, char **argv) {
 
     if (limiterUsed) {
         int limitedPercent = 100.0 * ((float)limiter->getLimitedFrames() / (float)limiter->getTotalFrames());
-        std::cout << limiter->getLimitedFrames() << " " << limiter->getTotalFrames() << std::endl;
-        std::cout << "Limiter applied to " << limitedPercent << "% of audio." << std::endl;
+        if (limiter->getLimitedFrames() > 0 && limitedPercent == 0) {
+            std::cout << "Limiter applied to <1% of audio." << std::endl;
+        } else {
+            std::cout << "Limiter applied to " << limitedPercent << "% of audio." << std::endl;
+        }
         if (limitedPercent > 10) {
             std::cout << "WARNING: You may want to lower the target dB level so that less limiting is applied." << std::endl;
         }
