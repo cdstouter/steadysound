@@ -23,19 +23,21 @@ int main(int argc, char **argv) {
     int limiterAttack = 1024;
     bool checkSilence = false;
     float predictive = 0.5;
+    float correction = 1.0;
 
     po::options_description prettyDesc("Options"); // this version doesn't include the positional arguments
     prettyDesc.add_options()
         ("help", "Show this help information")
         ("target,t", po::value<float>(&targetDb), "Set target dB level. Set to the median RMS dB level if not specified.")
         ("silence,s", po::value<float>(&minDb)->default_value(-45.0), "Minimum dB value for audio content, anything below this is considered silence.")
-        ("check-silence", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
+        ("check-silence,S", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
+        ("correction,c", po::value<float>(&correction)->default_value(1.0), "Correction factor. 0 means no volume levelling effect, 1 means full effect.")
         ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
-        ("predictive", po::value<float>(&predictive)->default_value(0.5), "Predictive factor. 1.0 is fully predictive, 0.0 is fully reactive.")
-        ("block-size", po::value<int>(&blockSize)->default_value(1024), "Block size for calculating RMS values.")
-        ("limiter-attack", po::value<int>(&limiterAttack)->default_value(4), "Limiter attack time in samples. Increasing this value will directly increase processing time.")
-        ("limiter-release", po::value<float>(&limiterRelease)->default_value(0.0006), "Limiter release time in dB/sample.")
-        ("limiter-disable", "Disable the limiter completely - may cause clipping.")
+        ("predictive,p", po::value<float>(&predictive)->default_value(0.5), "Predictive factor. 1.0 is fully predictive, 0.0 is fully reactive.")
+        ("block-size,b", po::value<int>(&blockSize)->default_value(1024), "Block size for calculating RMS values.")
+        ("limiter-attack,a", po::value<int>(&limiterAttack)->default_value(4), "Limiter attack time in samples. Increasing this value will directly increase processing time.")
+        ("limiter-release,r", po::value<float>(&limiterRelease)->default_value(0.0006), "Limiter release time in dB/sample.")
+        ("limiter-disable,L", "Disable the limiter completely - may cause clipping.")
     ;
     po::options_description desc("Options"); // this one is actually used to parse, don't use required()
     desc.add_options()
@@ -44,13 +46,14 @@ int main(int argc, char **argv) {
         ("output-file", po::value<std::string>(&outputFilename))
         ("target,t", po::value<float>(&targetDb), "Set target dB level. Set to the median RMS dB level if not specified.")
         ("silence,s", po::value<float>(&minDb)->default_value(-45.0), "Minimum dB value for audio content, anything below this is considered silence.")
-        ("check-silence", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
+        ("check-silence,S", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
+        ("correction,c", po::value<float>(&correction)->default_value(1.0), "Correction factor. 0 means no volume levelling effect, 1 means full effect.")
         ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
-        ("predictive", po::value<float>(&predictive)->default_value(0.5), "Predictive factor. 1.0 is fully predictive, 0.0 is fully reactive.")
-        ("block-size", po::value<int>(&blockSize)->default_value(1024), "Block size for calculating RMS values.")
-        ("limiter-attack", po::value<int>(&limiterAttack)->default_value(4), "Limiter attack time in samples. Increasing this value will directly increase processing time.")
-        ("limiter-release", po::value<float>(&limiterRelease)->default_value(0.0006), "Limiter release time in dB/sample.")
-        ("disable-limiter", "Disable the limiter completely - may cause clipping.")
+        ("predictive,p", po::value<float>(&predictive)->default_value(0.5), "Predictive factor. 1.0 is fully predictive, 0.0 is fully reactive.")
+        ("block-size,b", po::value<int>(&blockSize)->default_value(1024), "Block size for calculating RMS values.")
+        ("limiter-attack,a", po::value<int>(&limiterAttack)->default_value(4), "Limiter attack time in samples. Increasing this value will directly increase processing time.")
+        ("limiter-release,r", po::value<float>(&limiterRelease)->default_value(0.0006), "Limiter release time in dB/sample.")
+        ("disable-limiter,L", "Disable the limiter completely - may cause clipping.")
     ;
     po::positional_options_description p;
     p.add("input-file", 1).add("output-file", 1);
@@ -91,6 +94,10 @@ int main(int argc, char **argv) {
     }
     if (minDb >= 0) {
         std::cout << "Silence level must be < 0 dB." << std::endl;
+        return 1;
+    }
+    if (correction < 0.0 || correction > 1.0) {
+        std::cout << "Correction factor must be between 0 and 1." << std::endl;
         return 1;
     }
     if (targetDb >= 0) {
@@ -221,7 +228,9 @@ int main(int argc, char **argv) {
         }
         if (numBlocks > minAverageBlocks) {
             rms = rms / (float)numBlocks;
-            float gain = targetDb - rms;
+            float correctedDb = ((rms - medianRMS) * correction) + medianRMS;
+            //float gain = targetDb - rms;
+            float gain = targetDb - correctedDb;
             gainPoint gp;
             gp.gain = gain;
             gp.position = (i * blockSize) + (blockSize / 2);
