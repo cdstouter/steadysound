@@ -177,6 +177,8 @@ int main(int argc, char **argv) {
     std::cout << "Calculating gain points..." << std::endl;
     std::vector<gainPoint> gainPoints;
     int minAverageBlocks = windowSize * 1.5;
+    float maximumGain = 0;
+    float minimumGain = 0;
     for (std::vector<float>::size_type i=0; i<rmsBlocks.size(); i++) {
         if (currentBlock < rmsBlocks.size()) {
             ringBuffer[ringBufferPos] = rmsBlocks[currentBlock];
@@ -202,6 +204,8 @@ int main(int argc, char **argv) {
             gp.gain = gain;
             gp.position = (i * blockSize) + (blockSize / 2);
             gainPoints.push_back(gp);
+            if (gainPoints.size() == 1 || gain > maximumGain) maximumGain = gain;
+            if (gainPoints.size() == 1 || gain < minimumGain) minimumGain = gain;
         }
     }
     std::cout << gainPoints.size() << " gain points calculated." << std::endl;
@@ -210,6 +214,8 @@ int main(int argc, char **argv) {
         sf_close(infile);
         return 1;
     }
+    std::cout << "Minimum gain: " << minimumGain << " dB." << std::endl;
+    std::cout << "Maximum gain: " << maximumGain << " dB." << std::endl;
 
     SF_INFO outinfo;
     outinfo.format = SF_FORMAT_WAV | SF_FORMAT_PCM_16;
