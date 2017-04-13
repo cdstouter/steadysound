@@ -1,0 +1,7 @@
+#ifndef VERSION_HPP
+#define VERSION_HPP
+
+#define STEADYSOUND_MAJOR_VERSION 1
+#define STEADYSOUND_MINOR_VERSION 0
+
+#endif

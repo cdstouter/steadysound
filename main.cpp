@@ -6,6 +6,7 @@
 #include <vector>
 #include <boost/program_options.hpp>
 
+#include "version.hpp"
 #include "utilities.hpp"
 #include "limiter.hpp"
 
@@ -72,6 +73,7 @@ int main(int argc, char **argv) {
     }
 
     if (vm.count("help")) {
+        std::cout << "SteadySound v" << STEADYSOUND_MAJOR_VERSION << "." << STEADYSOUND_MINOR_VERSION << std::endl << std::endl;
         std::cout << "Usage: " << argv[0] << " input output OPTIONS" << std::endl << std::endl;
         std::cout << prettyDesc << std::endl;
         std::cout << "The input file can be in any format that libsndfile supports, which includes ";
