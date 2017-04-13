@@ -135,7 +135,7 @@ int main(int argc, char **argv) {
     std::ofstream gnuplot;
     if (checkSilence) {
         SF_INFO outinfo;
-        outinfo.format = SF_FORMAT_WAV | SF_FORMAT_PCM_16;
+        outinfo.format = info.format;
         outinfo.samplerate = info.samplerate;
         outinfo.channels = info.channels;
         outfile = sf_open(outputFilename.c_str(), SFM_WRITE, &outinfo);
@@ -280,7 +280,7 @@ int main(int argc, char **argv) {
     std::cout << "Maximum gain: " << maximumGain << " dB." << std::endl;
 
     SF_INFO outinfo;
-    outinfo.format = SF_FORMAT_WAV | SF_FORMAT_PCM_16;
+    outinfo.format = info.format;
     outinfo.samplerate = info.samplerate;
     outinfo.channels = info.channels;
     outfile = sf_open(outputFilename.c_str(), SFM_WRITE, &outinfo);
