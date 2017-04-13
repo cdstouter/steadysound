@@ -1,6 +1,7 @@
 #include <sndfile.h>
 #include <iostream>
 #include <iomanip>
+#include <fstream>
 #include <string>
 #include <vector>
 #include <boost/program_options.hpp>
@@ -30,7 +31,7 @@ int main(int argc, char **argv) {
         ("help", "Show this help information")
         ("target,t", po::value<float>(&targetDb), "Set target dB level. Set to the median RMS dB level if not specified.")
         ("silence,s", po::value<float>(&minDb)->default_value(-45.0), "Minimum dB value for audio content, anything below this is considered silence.")
-        ("check-silence,S", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
+        ("check-silence,S", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level. Also writes a GnuPlot file with an RMS graph.")
         ("correction,c", po::value<float>(&correction)->default_value(1.0), "Correction factor. 0 means no volume levelling effect, 1 means full effect.")
         ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
         ("predictive,p", po::value<float>(&predictive)->default_value(0.5), "Predictive factor. 1.0 is fully predictive, 0.0 is fully reactive.")
@@ -46,7 +47,7 @@ int main(int argc, char **argv) {
         ("output-file", po::value<std::string>(&outputFilename))
         ("target,t", po::value<float>(&targetDb), "Set target dB level. Set to the median RMS dB level if not specified.")
         ("silence,s", po::value<float>(&minDb)->default_value(-45.0), "Minimum dB value for audio content, anything below this is considered silence.")
-        ("check-silence,S", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
+        ("check-silence,S", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level. Also writes a GnuPlot file with an RMS graph.")
         ("correction,c", po::value<float>(&correction)->default_value(1.0), "Correction factor. 0 means no volume levelling effect, 1 means full effect.")
         ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
         ("predictive,p", po::value<float>(&predictive)->default_value(0.5), "Predictive factor. 1.0 is fully predictive, 0.0 is fully reactive.")
@@ -131,6 +132,7 @@ int main(int argc, char **argv) {
     }
 
     SNDFILE *outfile = NULL;
+    std::ofstream gnuplot;
     if (checkSilence) {
         SF_INFO outinfo;
         outinfo.format = SF_FORMAT_WAV | SF_FORMAT_PCM_16;
@@ -143,6 +145,15 @@ int main(int argc, char **argv) {
             sf_close(infile);
             return 1;
         }
+
+        gnuplot.open((outputFilename + ".gp").c_str());
+        if (!gnuplot.is_open()) {
+            std::cout << "Error opening output GnuPlot file." << std::endl;
+            sf_close(infile);
+            sf_close(outfile);
+            return 1;
+        }
+        gnuplot << "# Time RMS" << std::endl << "$data << EOD" << std::endl;
     }
 
     // the file was opened, let's calculate some RMS!
@@ -152,6 +163,8 @@ int main(int argc, char **argv) {
     float *data = new float[blockSize * info.channels];
     float medianRMS = 0.0;
     int64_t medianRMSCount = 0;
+    sf_count_t currentFrame = 0;
+    float currentSeconds = 0;
     do {
         frames = sf_readf_float(infile, data, blockSize);
         float rms = calculateRMS(data, frames * info.channels);
@@ -163,6 +176,11 @@ int main(int argc, char **argv) {
             if (checkSilence) {
                 sf_writef_float(outfile, data, frames);
             }
+        }
+        if (checkSilence) {
+            currentSeconds = (float)currentFrame / (float)info.samplerate;
+            gnuplot << currentSeconds << " " << rmsDb << std::endl;
+            currentFrame += frames;
         }
     } while (frames == blockSize);
     std::cout << rmsBlocks.size() << " RMS blocks calculated." << std::endl;
@@ -180,6 +198,19 @@ int main(int argc, char **argv) {
 
         sf_close(infile);
         sf_close(outfile);
+
+        gnuplot << "EOD" << std::endl << std::endl;
+        gnuplot << "set title \"" << inputFilename << "\"" << std::endl;
+        gnuplot << "set xlabel \"Time (s)\"" << std::endl;
+        gnuplot << "set xrange [0:" << currentSeconds << "]" << std::endl;
+        gnuplot << "set ylabel \"RMS (dB)\"" << std::endl;
+        gnuplot << "set style line 1 lw 0.5 lc variable" << std::endl;
+        gnuplot << "plot \"$data\" using 1:2:2 with lines lw 0.5 palette title \"\"" << std::endl;
+        gnuplot.close();
+
+        std::cout << std::endl << "An RMS graph of the input file has been written to the GnuPlot file " << outputFilename << ".gp. ";
+        std::cout << "To view the RMS graph, run GnuPlot like this:" << std::endl << std::endl;
+        std::cout << "gnuplot " << outputFilename << ".gp -" << std::endl;
         return 0;
     }
 
@@ -274,7 +305,7 @@ int main(int argc, char **argv) {
     float *oldData = backingData2;
     sf_count_t oldFrames;
     sf_seek(infile, 0, SEEK_SET);
-    sf_count_t currentFrame = 0;
+    currentFrame = 0;
     sf_count_t clipped = 0;
     int currentPerc = 0;
     int blockNum = 0;
