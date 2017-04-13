@@ -35,3 +35,12 @@ Running that command will install everything you need to compile both 32-bit and
     g++ *.cpp -Wall -lsndfile -lboost_program_options-mt -o steadysound.exe
 
 Once it's compiled, you will probably have to copy some DLLs from \[MSYS2 installation directory\]/mingw\[32|64\]/bin/ to get it to run.
+
+## License
+
+This program is released under the MIT License. See the LICENSE file for more information. It also uses a few software libraries that are under different licenses:
+
+* libsndfile - GNU LGPL
+* boost\_program\_options - Boost Software License
+
+For the details of these licenses, see the LICENSE-3RD-PARTY file.
