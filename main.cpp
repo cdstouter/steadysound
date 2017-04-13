@@ -23,6 +23,7 @@ int main(int argc, char **argv) {
     float limiterRelease = 0.0006;
     int limiterAttack = 1024;
     bool checkSilence = false;
+    bool analyze = false;
     float predictive = 0.5;
     float correction = 1.0;
 
@@ -31,7 +32,8 @@ int main(int argc, char **argv) {
         ("help", "Show this help information")
         ("target,t", po::value<float>(&targetDb), "Set target dB level. Set to the median RMS dB level if not specified.")
         ("silence,s", po::value<float>(&minDb)->default_value(-45.0), "Minimum dB value for audio content, anything below this is considered silence.")
-        ("check-silence,S", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level. Also writes a GnuPlot file with an RMS graph.")
+        ("analyze,A", "Skips dynamics processing and outputs a GnuPlot file with an RMS graph.")
+        ("check-silence,S", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
         ("correction,c", po::value<float>(&correction)->default_value(1.0), "Correction factor. 0 means no volume levelling effect, 1 means full effect.")
         ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
         ("predictive,p", po::value<float>(&predictive)->default_value(0.5), "Predictive factor. 1.0 is fully predictive, 0.0 is fully reactive.")
@@ -47,7 +49,8 @@ int main(int argc, char **argv) {
         ("output-file", po::value<std::string>(&outputFilename))
         ("target,t", po::value<float>(&targetDb), "Set target dB level. Set to the median RMS dB level if not specified.")
         ("silence,s", po::value<float>(&minDb)->default_value(-45.0), "Minimum dB value for audio content, anything below this is considered silence.")
-        ("check-silence,S", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level. Also writes a GnuPlot file with an RMS graph.")
+        ("analyze,A", "Skips dynamics processing and outputs a GnuPlot file with an RMS graph.")
+        ("check-silence,S", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
         ("correction,c", po::value<float>(&correction)->default_value(1.0), "Correction factor. 0 means no volume levelling effect, 1 means full effect.")
         ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
         ("predictive,p", po::value<float>(&predictive)->default_value(0.5), "Predictive factor. 1.0 is fully predictive, 0.0 is fully reactive.")
@@ -85,6 +88,9 @@ int main(int argc, char **argv) {
     }
     if (vm.count("check-silence")) {
         checkSilence = true;
+    }
+    if (vm.count("analyze")) {
+        analyze = true;
     }
     if (vm.count("target")) {
         targetDbSet = true;
@@ -149,12 +155,14 @@ int main(int argc, char **argv) {
             sf_close(infile);
             return 1;
         }
+    }
 
+    if (analyze) {
         gnuplot.open((outputFilename + ".gp").c_str());
         if (!gnuplot.is_open()) {
             std::cout << "Error opening output GnuPlot file." << std::endl;
             sf_close(infile);
-            sf_close(outfile);
+            if (checkSilence) sf_close(outfile);
             return 1;
         }
         gnuplot << "# Time RMS" << std::endl << "$data << EOD" << std::endl;
@@ -181,7 +189,7 @@ int main(int argc, char **argv) {
                 sf_writef_float(outfile, data, frames);
             }
         }
-        if (checkSilence) {
+        if (analyze) {
             currentSeconds = (float)currentFrame / (float)info.samplerate;
             gnuplot << currentSeconds << " " << rmsDb << std::endl;
             currentFrame += frames;
@@ -197,12 +205,15 @@ int main(int argc, char **argv) {
     }
     delete[] data;
 
-    if (checkSilence) {
+    if (checkSilence || analyze) {
         std::cout << "Done." << std::endl;
-
+    }
+    if (checkSilence) {
+        std::cout << "The input audio has been written to " << outputFilename << " with all detected silence removed." << std::endl;
         sf_close(infile);
         sf_close(outfile);
-
+    }
+    if (analyze) {
         gnuplot << "EOD" << std::endl << std::endl;
         gnuplot << "set title \"" << inputFilename << "\"" << std::endl;
         gnuplot << "set xlabel \"Time (s)\"" << std::endl;
@@ -215,8 +226,8 @@ int main(int argc, char **argv) {
         std::cout << std::endl << "An RMS graph of the input file has been written to the GnuPlot file " << outputFilename << ".gp. ";
         std::cout << "To view the RMS graph, run GnuPlot like this:" << std::endl << std::endl;
         std::cout << "gnuplot " << outputFilename << ".gp -" << std::endl;
-        return 0;
     }
+    if (analyze || checkSilence) return 0;
 
     // use a ring buffer to calculate a moving average over the RMS blocks
     int ringBufferSize = windowSize * 2 + 1;
