@@ -17,10 +17,10 @@ int main(int argc, char **argv) {
     int blockSize = 1024;
     float minDb = -45;
     bool targetDbSet = false;
-    float targetDb = -20;
+    float targetDb = -20.0;
     int windowSize = 20;
     bool limiterUsed = true;
-    float limiterRelease = 0.0006;
+    float limiterRelease = 25;
     int limiterAttack = 1024;
     bool checkSilence = false;
     bool analyze = false;
@@ -39,7 +39,7 @@ int main(int argc, char **argv) {
         ("predictive,p", po::value<float>(&predictive)->default_value(0.5), "Predictive factor. 1.0 is fully predictive, 0.0 is fully reactive.")
         ("block-size,b", po::value<int>(&blockSize)->default_value(1024), "Block size for calculating RMS values.")
         ("limiter-attack,a", po::value<int>(&limiterAttack)->default_value(4), "Limiter attack time in samples. Increasing this value will directly increase processing time.")
-        ("limiter-release,r", po::value<float>(&limiterRelease)->default_value(0.0006), "Limiter release time in dB/sample.")
+        ("limiter-release,r", po::value<float>(&limiterRelease)->default_value(25.0), "Limiter release time in dB/second.")
         ("limiter-disable,L", "Disable the limiter completely - may cause clipping.")
     ;
     po::options_description desc("Options"); // this one is actually used to parse, don't use required()
@@ -56,7 +56,7 @@ int main(int argc, char **argv) {
         ("predictive,p", po::value<float>(&predictive)->default_value(0.5), "Predictive factor. 1.0 is fully predictive, 0.0 is fully reactive.")
         ("block-size,b", po::value<int>(&blockSize)->default_value(1024), "Block size for calculating RMS values.")
         ("limiter-attack,a", po::value<int>(&limiterAttack)->default_value(4), "Limiter attack time in samples. Increasing this value will directly increase processing time.")
-        ("limiter-release,r", po::value<float>(&limiterRelease)->default_value(0.0006), "Limiter release time in dB/sample.")
+        ("limiter-release,r", po::value<float>(&limiterRelease)->default_value(25.0), "Limiter release time in dB/second.")
         ("disable-limiter,L", "Disable the limiter completely - may cause clipping.")
     ;
     po::positional_options_description p;
@@ -308,7 +308,7 @@ int main(int argc, char **argv) {
 
     // set up the limiter
     Limiter *limiter = NULL;
-    if (limiterUsed) limiter = new Limiter(limiterAttack, limiterRelease);
+    if (limiterUsed) limiter = new Limiter(limiterAttack, limiterRelease / (float)info.samplerate);
 
     // now we go through the file and apply the gain!
     std::cout << "Applying gain..." << std::endl;
