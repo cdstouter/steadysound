@@ -92,6 +92,7 @@ int main(int argc, char **argv) {
         std::cout << optionsMain << std::endl;
         std::cout << optionsAnalysis << std::endl;
         std::cout << optionsPeakLimiter << std::endl;
+        std::cout << optionsRMSLimiter << std::endl;
         std::cout << "The input file can be in any format that libsndfile supports, which includes ";
         std::cout << "WAV, AIFF, FLAC, and OGG. Any samplerate and number of channels is supported. ";
         std::cout << "The output file will be saved in the same format as the input file, no matter what extension is given. ";
