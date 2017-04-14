@@ -17,7 +17,7 @@ int main(int argc, char **argv) {
     std::string inputFilename = "";
     std::string outputFilename = "";
     int blockSize = 1024;
-    float minDb = -45;
+    float minDb = -80;
     bool targetDbSet = false;
     float targetDb = -20.0;
     int windowSize = 20;
@@ -33,7 +33,7 @@ int main(int argc, char **argv) {
     prettyDesc.add_options()
         ("help", "Show this help information")
         ("target,t", po::value<float>(&targetDb), "Set target dB level. Set to the median RMS dB level if not specified.")
-        ("silence,s", po::value<float>(&minDb)->default_value(-45.0), "Minimum dB value for audio content, anything below this is considered silence.")
+        ("silence,s", po::value<float>(&minDb)->default_value(-80.0), "Minimum dB value for audio content, anything below this is considered silence.")
         ("analyze,A", "Skips dynamics processing and outputs a GnuPlot file with an RMS graph.")
         ("check-silence,S", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
         ("correction,c", po::value<float>(&correction)->default_value(1.0), "Correction factor. 0 means no volume levelling effect, 1 means full effect.")
@@ -50,7 +50,7 @@ int main(int argc, char **argv) {
         ("input-file", po::value<std::string>(&inputFilename))
         ("output-file", po::value<std::string>(&outputFilename))
         ("target,t", po::value<float>(&targetDb), "Set target dB level. Set to the median RMS dB level if not specified.")
-        ("silence,s", po::value<float>(&minDb)->default_value(-45.0), "Minimum dB value for audio content, anything below this is considered silence.")
+        ("silence,s", po::value<float>(&minDb)->default_value(-80.0), "Minimum dB value for audio content, anything below this is considered silence.")
         ("analyze,A", "Skips dynamics processing and outputs a GnuPlot file with an RMS graph.")
         ("check-silence,S", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
         ("correction,c", po::value<float>(&correction)->default_value(1.0), "Correction factor. 0 means no volume levelling effect, 1 means full effect.")
