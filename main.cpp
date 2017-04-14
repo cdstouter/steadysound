@@ -9,6 +9,7 @@
 #include "version.hpp"
 #include "utilities.hpp"
 #include "limiter.hpp"
+#include "ringbuffer.hpp"
 
 namespace po = boost::program_options;
 
@@ -232,23 +233,17 @@ int main(int argc, char **argv) {
     if (analyze || checkSilence) return 0;
 
     // use a ring buffer to calculate a moving average over the RMS blocks
-    int ringBufferSize = windowSize * 2 + 1;
-    float ringBuffer[ringBufferSize];
-    for (int i=0; i<ringBufferSize; i++) {
-        ringBuffer[i] = -1000.0;
-    }
-    int ringBufferPos = 0;
+    RingBuffer<float> ringBuffer(windowSize * 2 + 1, -1000.0);
     std::vector<float>::size_type currentBlock = 0;
     // start filling the ring buffer
     int ringBufferPrefill = 1 + (int)(predictive * (float)windowSize * 2.0);
     for (int i=0; i<ringBufferPrefill; i++) {
         if (currentBlock < rmsBlocks.size()) {
-            ringBuffer[ringBufferPos] = rmsBlocks[currentBlock];
+            ringBuffer.add(rmsBlocks[currentBlock]);
         } else {
-            ringBuffer[ringBufferPos] = -1000.0;
+            ringBuffer.add(-1000.0);
         }
         currentBlock++;
-        ringBufferPos++;
     }
     // go through all of our blocks
     std::cout << "Calculating gain points..." << std::endl;
@@ -258,20 +253,18 @@ int main(int argc, char **argv) {
     float minimumGain = 0;
     for (std::vector<float>::size_type i=0; i<rmsBlocks.size(); i++) {
         if (currentBlock < rmsBlocks.size()) {
-            ringBuffer[ringBufferPos] = rmsBlocks[currentBlock];
+            ringBuffer.add(rmsBlocks[currentBlock]);
         } else {
-            ringBuffer[ringBufferPos] = -1000.0;
+            ringBuffer.add(-1000.0);
         }
         currentBlock++;
-        ringBufferPos++;
-        if (ringBufferPos >= ringBufferSize) ringBufferPos = 0;
         // calculate the average RMS if we have enough blocks that aren't silent
         int numBlocks = 0;
         float rms = 0;
-        for (int j=0; j<ringBufferSize; j++) {
-            if (ringBuffer[j] > minDb) {
+        for (unsigned int j=0; j<ringBuffer.size(); j++) {
+            if (ringBuffer.getBuffer()[j] > minDb) {
                 numBlocks++;
-                rms += ringBuffer[j];
+                rms += ringBuffer.getBuffer()[j];
             }
         }
         if (numBlocks > minAverageBlocks) {
