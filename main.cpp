@@ -29,54 +29,57 @@ int main(int argc, char **argv) {
     float predictive = 0.5;
     float correction = 1.0;
 
-    po::options_description prettyDesc("Options"); // this version doesn't include the positional arguments
-    prettyDesc.add_options()
+    po::options_description optionsMain("Main options"); // this version doesn't include the positional arguments
+    optionsMain.add_options()
         ("help", "Show this help information")
         ("target,t", po::value<float>(&targetDb), "Set target dB level. Set to the median RMS dB level if not specified.")
         ("silence,s", po::value<float>(&minDb)->default_value(-80.0), "Minimum dB value for audio content, anything below this is considered silence.")
-        ("analyze,A", "Skips dynamics processing and outputs a GnuPlot file with an RMS graph.")
-        ("check-silence,S", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
         ("correction,c", po::value<float>(&correction)->default_value(1.0), "Correction factor. 0 means no volume levelling effect, 1 means full effect.")
-        ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
         ("predictive,p", po::value<float>(&predictive)->default_value(0.5), "Predictive factor. 1.0 is fully predictive, 0.0 is fully reactive.")
         ("block-size,b", po::value<int>(&blockSize)->default_value(1024), "Block size for calculating RMS values.")
+        ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
+    ;
+    po::options_description optionsAnalysis("Analysis options");
+    optionsAnalysis.add_options()
+        ("analyze,A", "Skips dynamics processing and outputs a GnuPlot file with an RMS graph of the input file.")
+        ("check-silence,S", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
+    ;
+    po::options_description optionsPeakLimiter("Peak limiter options");
+    optionsPeakLimiter.add_options()
         ("limiter-attack,a", po::value<int>(&limiterAttack)->default_value(4), "Limiter attack time in samples. Increasing this value will directly increase processing time.")
         ("limiter-release,r", po::value<float>(&limiterRelease)->default_value(25.0), "Limiter release time in dB/second.")
         ("limiter-disable,L", "Disable the limiter completely - may cause clipping.")
     ;
-    po::options_description desc("Options"); // this one is actually used to parse, don't use required()
-    desc.add_options()
-        ("help", "Show this help information")
+    po::options_description optionsPositionals("Options"); // this one is actually used to parse, don't use required()
+    optionsPositionals.add_options()
         ("input-file", po::value<std::string>(&inputFilename))
         ("output-file", po::value<std::string>(&outputFilename))
-        ("target,t", po::value<float>(&targetDb), "Set target dB level. Set to the median RMS dB level if not specified.")
-        ("silence,s", po::value<float>(&minDb)->default_value(-80.0), "Minimum dB value for audio content, anything below this is considered silence.")
-        ("analyze,A", "Skips dynamics processing and outputs a GnuPlot file with an RMS graph.")
-        ("check-silence,S", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
-        ("correction,c", po::value<float>(&correction)->default_value(1.0), "Correction factor. 0 means no volume levelling effect, 1 means full effect.")
-        ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
-        ("predictive,p", po::value<float>(&predictive)->default_value(0.5), "Predictive factor. 1.0 is fully predictive, 0.0 is fully reactive.")
-        ("block-size,b", po::value<int>(&blockSize)->default_value(1024), "Block size for calculating RMS values.")
-        ("limiter-attack,a", po::value<int>(&limiterAttack)->default_value(4), "Limiter attack time in samples. Increasing this value will directly increase processing time.")
-        ("limiter-release,r", po::value<float>(&limiterRelease)->default_value(25.0), "Limiter release time in dB/second.")
-        ("disable-limiter,L", "Disable the limiter completely - may cause clipping.")
     ;
-    po::positional_options_description p;
-    p.add("input-file", 1).add("output-file", 1);
+    po::positional_options_description optionsPositionalsDescription;
+    optionsPositionalsDescription.add("input-file", 1).add("output-file", 1);
+
+    //prettyDesc.add(positionals);
+    po::options_description optionsAll;
+    optionsAll.add(optionsMain);
+    optionsAll.add(optionsAnalysis);
+    optionsAll.add(optionsPeakLimiter);
+    optionsAll.add(optionsPositionals);
 
     po::variables_map vm;
     try {
-        po::store(po::command_line_parser(argc, argv).options(desc).positional(p).run(), vm);
+        po::store(po::command_line_parser(argc, argv).options(optionsAll).positional(optionsPositionalsDescription).run(), vm);
         po::notify(vm);
     } catch(std::exception& e) {
         std::cout << "Error: " << e.what() << std::endl;
         return 1;
     }
 
-    if (vm.count("help")) {
+    if (argc == 1 || vm.count("help")) {
         std::cout << "SteadySound v" << STEADYSOUND_MAJOR_VERSION << "." << STEADYSOUND_MINOR_VERSION << std::endl << std::endl;
         std::cout << "Usage: " << argv[0] << " input output OPTIONS" << std::endl << std::endl;
-        std::cout << prettyDesc << std::endl;
+        std::cout << optionsMain << std::endl;
+        std::cout << optionsAnalysis << std::endl;
+        std::cout << optionsPeakLimiter << std::endl;
         std::cout << "The input file can be in any format that libsndfile supports, which includes ";
         std::cout << "WAV, AIFF, FLAC, and OGG. Any samplerate and number of channels is supported. ";
         std::cout << "The output file will be saved in the same format as the input file, no matter what extension is given. ";
@@ -85,15 +88,19 @@ int main(int argc, char **argv) {
     }
 
     // do we have the required values?
-    if (!vm.count("input-file") || !vm.count("output-file")) {
-        std::cout << "The input and output filenames are required." << std::endl;
+    if (vm.count("analyze")) {
+        analyze = true;
+    }
+    if (!vm.count("input-file")) {
+        std::cout << "The input filename is required." << std::endl;
+        return 1;
+    }
+    if (!vm.count("output-file") && !analyze) {
+        std::cout << "The output filename is required." << std::endl;
         return 1;
     }
     if (vm.count("check-silence")) {
         checkSilence = true;
-    }
-    if (vm.count("analyze")) {
-        analyze = true;
     }
     if (vm.count("target")) {
         targetDbSet = true;
@@ -161,7 +168,7 @@ int main(int argc, char **argv) {
     }
 
     if (analyze) {
-        gnuplot.open((outputFilename + ".gp").c_str());
+        gnuplot.open((inputFilename + ".gp").c_str());
         if (!gnuplot.is_open()) {
             std::cout << "Error opening output GnuPlot file." << std::endl;
             sf_close(infile);
@@ -226,9 +233,9 @@ int main(int argc, char **argv) {
         gnuplot << "plot \"$data\" using 1:2:2 with lines lw 0.5 palette title \"\"" << std::endl;
         gnuplot.close();
 
-        std::cout << std::endl << "An RMS graph of the input file has been written to the GnuPlot file " << outputFilename << ".gp. ";
+        std::cout << std::endl << "An RMS graph of the input file has been written to the GnuPlot file " << inputFilename << ".gp. ";
         std::cout << "To view the RMS graph, run GnuPlot like this:" << std::endl << std::endl;
-        std::cout << "gnuplot " << outputFilename << ".gp -" << std::endl;
+        std::cout << "gnuplot " << inputFilename << ".gp -" << std::endl;
     }
     if (analyze || checkSilence) return 0;
 
