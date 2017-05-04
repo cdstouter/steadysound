@@ -249,7 +249,6 @@ int main(int argc, char **argv) {
     int minAverageBlocks = (int)((float)(lookAhead + lookBehind) * 0.75);
     if (minAverageBlocks == 0) minAverageBlocks = 1;
     for (std::vector<float>::size_type i=0; i<rmsBlocks.size(); i++) {
-        //float rms = 0, rmsWeight = 0;
         float rms = -1000.0;
         int numBlocks = 0;
         // lookbehind
@@ -263,8 +262,6 @@ int main(int argc, char **argv) {
                 gain = VtoDB(gain);
                 dB = dB + gain;
                 if (dB > rms) rms = dB;
-                //rms += (dB * mix);
-                //rmsWeight += mix;
                 numBlocks++;
             }
         }
@@ -279,13 +276,10 @@ int main(int argc, char **argv) {
                 gain = VtoDB(gain);
                 dB = dB + gain;
                 if (dB > rms) rms = dB;
-                //rms += (dB * mix);
-                //rmsWeight += mix;
                 numBlocks++;
             }
         }
         if (numBlocks > minAverageBlocks) {
-            //rms = rms / rmsWeight;
             float correctedGain = targetDb - rms;
             float uncorrectedGain = targetDb - medianRMS;
             float gain = (correction * correctedGain) + ((1.0 - correction) * uncorrectedGain);
@@ -328,9 +322,7 @@ int main(int argc, char **argv) {
     if (limiterUsed && limiterAttack > processSize) processSize = limiterAttack;
     float *backingData1 = new float[processSize * info.channels];
     float *backingData2 = new float[processSize * info.channels];
-    data = backingData1;
-    float *oldData = backingData2;
-    sf_count_t oldFrames;
+    sf_count_t frames1, frames2;
     sf_seek(infile, 0, SEEK_SET);
     currentFrame = 0;
     sf_count_t clipped = 0;
@@ -344,13 +336,9 @@ int main(int argc, char **argv) {
     gainPoint nextGainPoint;
     if (gainPoints.size() > 1) nextGainPoint = gainPoints[1];
     do {
-        // flip the buffers and read new data
-        float *temp = oldData;
-        data = oldData;
-        oldData = temp;
-        oldFrames = frames;
-        frames = sf_readf_float(infile, data, processSize);
-        for (sf_count_t i=0; i<frames; i++) {
+        // read new data
+        frames1 = sf_readf_float(infile, backingData1, processSize);
+        for (sf_count_t i=0; i<frames1; i++) {
             // calculate the gain
             float gain = 0.0;
             if (currentFrame <= firstGainPoint.position) {
@@ -371,18 +359,21 @@ int main(int argc, char **argv) {
             // apply the gain
             float highestValue = 0.0;
             for (int j=0; j<info.channels; j++) {
-                float sample = data[i * info.channels + j];
+                float sample = backingData1[i * info.channels + j];
                 sample = sample * gainMult;
                 if (!limiterUsed && sample > 1.0) clipped++;
                 if (sample > highestValue) highestValue = sample;
-                data[i * info.channels + j] = sample;
+                backingData1[i * info.channels + j] = sample;
             }
             currentFrame++;
         }
+        // flip the buffers
+        std::swap(backingData1, backingData2);
+        std::swap(frames1, frames2);
         // apply the limiter
-        limiter->process(oldData, oldFrames, info.channels, data, frames);
+        if (blockNum > 0) limiter->process(backingData1, frames1, info.channels, backingData2, frames2);
         // write the frames to the new file
-        if (blockNum > 0) sf_writef_float(outfile, oldData, oldFrames);
+        if (blockNum > 0) sf_writef_float(outfile, backingData1, frames1);
         blockNum++;
         if (totalBlocks > 0) {
             int thisPerc = (blockNum * 100) / totalBlocks;
@@ -391,11 +382,11 @@ int main(int argc, char **argv) {
                 std::cout << ">" << std::setw(3) << currentPerc << "% done" << "\r" << std::flush;
             }
         }
-    } while (frames == processSize);
+    } while (frames2 == processSize);
     std::cout << "Done.     " << std::endl;
 
-    limiter->process(data, frames, info.channels, NULL, 0);
-    sf_writef_float(outfile, data, frames);
+    limiter->process(backingData2, frames2, info.channels, NULL, 0);
+    sf_writef_float(outfile, backingData2, frames2);
     if (clipped) std::cout << "WARNING: " << clipped << " samples clipped and limiter disabled" << std::endl;
 
     if (limiterUsed) {
