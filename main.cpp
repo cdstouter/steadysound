@@ -20,14 +20,13 @@ int main(int argc, char **argv) {
     float minDb = -80;
     bool targetDbSet = false;
     float targetDb = -20.0;
-    int windowSize = 20;
     bool limiterUsed = true;
     float limiterRelease = 25;
     int limiterAttack = 1024;
     bool checkSilence = false;
     bool analyze = false;
-    float predictive = 0.5;
     float correction = 1.0;
+    int lookAhead, lookBehind;
 
     po::options_description optionsMain("Main options"); // this version doesn't include the positional arguments
     optionsMain.add_options()
@@ -35,31 +34,20 @@ int main(int argc, char **argv) {
         ("target,t", po::value<float>(&targetDb), "Set target dB level. Set to the median RMS dB level if not specified.")
         ("silence,s", po::value<float>(&minDb)->default_value(-80.0), "Minimum dB value for audio content, anything below this is considered silence.")
         ("correction,c", po::value<float>(&correction)->default_value(1.0), "Correction factor. 0 means no volume levelling effect, 1 means full effect.")
-        ("predictive,p", po::value<float>(&predictive)->default_value(0.5), "Predictive factor. 1.0 is fully predictive, 0.0 is fully reactive.")
-        ("block-size,b", po::value<int>(&blockSize)->default_value(1024), "Block size for calculating RMS values.")
-        ("window,w", po::value<int>(&windowSize)->default_value(20), "Window size for smoothing volume changes.")
+        ("block-size,b", po::value<int>(&blockSize)->default_value(500), "Block size in msec for calculating RMS values.")
+        ("lookahead,A", po::value<int>(&lookAhead)->default_value(10), "Number of RMS blocks to look ahead at.")
+        ("lookbehind,B", po::value<int>(&lookBehind)->default_value(10), "Number of RMS blocks to look behind at.")
     ;
     po::options_description optionsAnalysis("Analysis options");
     optionsAnalysis.add_options()
-        ("analyze,A", "Skips dynamics processing and outputs a GnuPlot file with an RMS graph of the input file.")
-        ("check-silence,S", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
+        ("analyze", "Skips dynamics processing and outputs a GnuPlot file with an RMS graph of the input file.")
+        ("check-silence", "Skips dynamics processing and cuts out silence from the output file. Use to test the silence level.")
     ;
     po::options_description optionsPeakLimiter("Peak limiter options");
     optionsPeakLimiter.add_options()
-        ("limiter-attack,a", po::value<int>(&limiterAttack)->default_value(4), "Limiter attack time in samples. Increasing this value will directly increase processing time.")
-        ("limiter-release,r", po::value<float>(&limiterRelease)->default_value(25.0), "Limiter release time in dB/second.")
+        ("limiter-attack", po::value<int>(&limiterAttack)->default_value(4), "Limiter attack time in samples. Increasing this value will directly increase processing time.")
+        ("limiter-release", po::value<float>(&limiterRelease)->default_value(25.0), "Limiter release time in dB/second.")
         ("limiter-disable,L", "Disable the limiter completely - may cause clipping.")
-    ;
-    bool rmsLimiterEnabled = false;
-    float rmsLimiterThreshold = 3.0;
-    float rmsLimiterRelease = 6.0; // dB per second
-    int rmsLimiterRingBufferSize = 10;
-    po::options_description optionsRMSLimiter("RMS limiter options");
-    optionsRMSLimiter.add_options()
-        ("rms-limiter,R", "Enable the RMS limiter.")
-        ("rms-limiter-threshold", po::value<float>(&rmsLimiterThreshold)->default_value(3.0), "How many dB above the target dB the limiter will kick in. Values from 3 to 6 generally work well.")
-        ("rms-limiter-smoothing", po::value<int>(&rmsLimiterRingBufferSize)->default_value(10), "RMS limiter smoothing. Controls the number of RMS blocks that are used at a time.")
-        ("rms-limiter-release", po::value<float>(&rmsLimiterRelease)->default_value(6.0), "RMS limiter release time in dB/second.")
     ;
     po::options_description optionsPositionals("Options"); // this one is actually used to parse, don't use required()
     optionsPositionals.add_options()
@@ -74,7 +62,6 @@ int main(int argc, char **argv) {
     optionsAll.add(optionsMain);
     optionsAll.add(optionsAnalysis);
     optionsAll.add(optionsPeakLimiter);
-    optionsAll.add(optionsRMSLimiter);
     optionsAll.add(optionsPositionals);
 
     po::variables_map vm;
@@ -92,7 +79,6 @@ int main(int argc, char **argv) {
         std::cout << optionsMain << std::endl;
         std::cout << optionsAnalysis << std::endl;
         std::cout << optionsPeakLimiter << std::endl;
-        std::cout << optionsRMSLimiter << std::endl;
         std::cout << "The input file can be in any format that libsndfile supports, which includes ";
         std::cout << "WAV, AIFF, FLAC, and OGG. Any samplerate and number of channels is supported. ";
         std::cout << "The output file will be saved in the same format as the input file, no matter what extension is given. ";
@@ -121,12 +107,9 @@ int main(int argc, char **argv) {
     if (vm.count("disable-limiter")) {
         limiterUsed = false;
     }
-    if (vm.count("rms-limiter")) {
-        rmsLimiterEnabled = true;
-    }
     // check that everything's within a valid range
-    if (blockSize < 32) {
-        std::cout << "Block size must be >= 32." << std::endl;
+    if (blockSize < 10) {
+        std::cout << "Block size must be >= 10." << std::endl;
         return 1;
     }
     if (minDb >= 0) {
@@ -141,12 +124,12 @@ int main(int argc, char **argv) {
         std::cout << "Target level must be < 0 dB." << std::endl;
         return 1;
     }
-    if (windowSize < 1) {
-        std::cout << "Window size must be >= 1." << std::endl;
+    if (lookAhead < 0) {
+        std::cout << "Lookahead must be >= 0." << std::endl;
         return 1;
     }
-    if (predictive < 0.0 && predictive > 1.0) {
-        std::cout << "Predictive factor must be between 0 and 1." << std::endl;
+    if (lookBehind < 0) {
+        std::cout << "Lookbehind must be >= 0." << std::endl;
         return 1;
     }
     if (limiterRelease <= 0) {
@@ -155,18 +138,6 @@ int main(int argc, char **argv) {
     }
     if (limiterAttack < 1) {
         std::cout << "Limiter attack must be > 0." << std::endl;
-        return 1;
-    }
-    if (rmsLimiterThreshold < 0.0) {
-        std::cout << "RMS limiter threshold must be > 0." << std::endl;
-        return 1;
-    }
-    if (rmsLimiterRelease <= 0.0) {
-        std::cout << "RMS limiter release must be > 0." << std::endl;
-        return 1;
-    }
-    if (rmsLimiterRingBufferSize <= 0) {
-        std::cout << "RMS limiter smoothing must be > 0." << std::endl;
         return 1;
     }
 
@@ -205,6 +176,9 @@ int main(int argc, char **argv) {
         }
         gnuplot << "# Time RMS" << std::endl << "$data << EOD" << std::endl;
     }
+
+    // convert blockSize from msec to samples
+    blockSize = (blockSize * info.samplerate) / 1000;
 
     // the file was opened, let's calculate some RMS!
     std::cout << "Calculating RMS values..." << std::endl;
@@ -267,81 +241,52 @@ int main(int argc, char **argv) {
     }
     if (analyze || checkSilence) return 0;
 
-    // use a ring buffer to calculate a moving average over the RMS blocks
-    RingBuffer<float> ringBuffer(windowSize * 2 + 1, -1000.0);
-    std::vector<float>::size_type currentBlock = 0;
-    // start filling the ring buffer
-    int ringBufferPrefill = 1 + (int)(predictive * (float)windowSize * 2.0);
-    for (int i=0; i<ringBufferPrefill; i++) {
-        if (currentBlock < rmsBlocks.size()) {
-            ringBuffer.add(rmsBlocks[currentBlock]);
-        } else {
-            ringBuffer.add(-1000.0);
-        }
-        currentBlock++;
-    }
-    // RMS limiter
-    float rmsLimiterGain = 0.0;
-    rmsLimiterRelease *= ((float)blockSize / (float)info.samplerate);
-    std::vector<float>::size_type rmsLimiterRingBufferBlock = 0;
-    RingBuffer<float> *rmsLimiterRingBuffer;
-    // prefill the RMS limiter ring buffer
-    if (rmsLimiterEnabled) {
-        rmsLimiterRingBuffer = new RingBuffer<float>(rmsLimiterRingBufferSize, -100.0);
-        for (int i=0; i<rmsLimiterRingBufferSize; i++) {
-            if (rmsLimiterRingBufferBlock < rmsBlocks.size()) {
-                rmsLimiterRingBuffer->add(rmsBlocks[rmsLimiterRingBufferBlock]);
-            }
-            rmsLimiterRingBufferBlock++;
-        }
-    }
-
     // go through all of our blocks
     std::cout << "Calculating gain points..." << std::endl;
     std::vector<gainPoint> gainPoints;
-    int minAverageBlocks = windowSize * 1.5;
     float maximumGain = 0;
     float minimumGain = 0;
-    std::vector<float>::size_type rmsLimiterBlocksUsed = 0;
+    int minAverageBlocks = (int)((float)(lookAhead + lookBehind) * 0.75);
+    if (minAverageBlocks == 0) minAverageBlocks = 1;
     for (std::vector<float>::size_type i=0; i<rmsBlocks.size(); i++) {
-        if (currentBlock < rmsBlocks.size()) {
-            ringBuffer.add(rmsBlocks[currentBlock]);
-        } else {
-            ringBuffer.add(-1000.0);
-        }
-        currentBlock++;
-        // calculate the average RMS if we have enough blocks that aren't silent
+        //float rms = 0, rmsWeight = 0;
+        float rms = -1000.0;
         int numBlocks = 0;
-        float rms = 0;
-        for (unsigned int j=0; j<ringBuffer.size(); j++) {
-            if (ringBuffer.getBuffer()[j] > minDb) {
+        // lookbehind
+        for (int j=1; j<=lookBehind; j++) {
+            int64_t pos = i - j;
+            if (pos < 0) break;
+            float dB = rmsBlocks[pos];
+            if (dB > minDb) {
+                float gain = 1.0 - ((float)j / (float)(lookBehind + 1));
+                gain = std::pow(gain, 0.75);
+                gain = VtoDB(gain);
+                dB = dB + gain;
+                if (dB > rms) rms = dB;
+                //rms += (dB * mix);
+                //rmsWeight += mix;
                 numBlocks++;
-                rms += ringBuffer.getBuffer()[j];
             }
         }
-        float rmsLimiterRMS = 0.0;
-        if (rmsLimiterEnabled) {
-            if (rmsLimiterRingBufferBlock < rmsBlocks.size()) {
-                rmsLimiterRingBuffer->add(rmsBlocks[rmsLimiterRingBufferBlock]);
-            } else {
-                rmsLimiterRingBuffer->add(-100.0);
+        // lookahead
+        for (int j=0; j<=lookAhead; j++) {
+            int64_t pos = i + j;
+            if (pos >= (int64_t)rmsBlocks.size()) break;
+            float dB = rmsBlocks[pos];
+            if (dB > minDb) {
+                float gain = 1.0 - ((float)j / (float)(lookAhead + 1));
+                gain = std::pow(gain, 0.75);
+                gain = VtoDB(gain);
+                dB = dB + gain;
+                if (dB > rms) rms = dB;
+                //rms += (dB * mix);
+                //rmsWeight += mix;
+                numBlocks++;
             }
-            rmsLimiterRingBufferBlock++;
-            rmsLimiterRMS = rmsLimiterRingBuffer->getMedian();
         }
         if (numBlocks > minAverageBlocks) {
-            rms = rms / (float)numBlocks;
+            //rms = rms / rmsWeight;
             float correctedGain = targetDb - rms;
-            // apply the RMS limiter gain
-            if (rmsLimiterEnabled) {
-                correctedGain += rmsLimiterGain;
-                if (rmsLimiterGain < 0.0) rmsLimiterBlocksUsed++;
-                float over = (rmsLimiterRMS + correctedGain) - (targetDb + rmsLimiterThreshold);
-                if (over > 0.0) {
-                    rmsLimiterGain -= over;
-                    correctedGain -= over;
-                }
-            }
             float uncorrectedGain = targetDb - medianRMS;
             float gain = (correction * correctedGain) + ((1.0 - correction) * uncorrectedGain);
             gainPoint gp;
@@ -351,21 +296,8 @@ int main(int argc, char **argv) {
             if (gainPoints.size() == 1 || gain > maximumGain) maximumGain = gain;
             if (gainPoints.size() == 1 || gain < minimumGain) minimumGain = gain;
         }
-        if (rmsLimiterEnabled) {
-            rmsLimiterGain += rmsLimiterRelease;
-            if (rmsLimiterGain > 0.0) rmsLimiterGain = 0.0;
-        }
     }
     std::cout << gainPoints.size() << " gain points calculated." << std::endl;
-    if (rmsLimiterEnabled) {
-        delete rmsLimiterRingBuffer;
-        int perc = 100.0 * ((float)rmsLimiterBlocksUsed / (float)rmsBlocks.size());
-        if (perc == 0 && rmsLimiterBlocksUsed > 0) {
-            std::cout << "RMS limiter applied to <1% of blocks." << std::endl;
-        } else {
-            std::cout << "RMS limiter applied to " << perc << "% of blocks." << std::endl;
-        }
-    }
     if (gainPoints.size() == 0) {
         std::cout << "Error: no gain points found, nothing to do." << std::endl;
         sf_close(infile);
