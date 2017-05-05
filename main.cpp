@@ -253,7 +253,7 @@ int main(int argc, char **argv) {
         int numBlocks = 0;
         // lookbehind
         for (int j=1; j<=lookBehind; j++) {
-            int64_t pos = i - j;
+            int64_t pos = (int64_t)i - (int64_t)j;
             if (pos < 0) break;
             float dB = rmsBlocks[pos];
             if (dB > minDb) {
@@ -267,7 +267,7 @@ int main(int argc, char **argv) {
         }
         // lookahead
         for (int j=0; j<=lookAhead; j++) {
-            int64_t pos = i + j;
+            int64_t pos = (int64_t)i + (int64_t)j;
             if (pos >= (int64_t)rmsBlocks.size()) break;
             float dB = rmsBlocks[pos];
             if (dB > minDb) {
